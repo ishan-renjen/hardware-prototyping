@@ -1,0 +1,8 @@
+bazel-bin
+bazel-fpga
+bazel-out
+bazel-testlogs
+
+third_party/
+
+*.lock

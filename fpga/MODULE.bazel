@@ -1,0 +1,95 @@
+module(name = "fpga_prototyping")
+
+###############################################################################
+# XLA
+###############################################################################
+
+bazel_dep(name = "xla")
+
+archive_override(
+    module_name = "xla",
+    urls = ["https://github.com/openxla/xla/archive/bedbac90cfaa233d914a4c57c1cf9b8f18c42963.tar.gz"],
+    strip_prefix = "xla-bedbac90cfaa233d914a4c57c1cf9b8f18c42963",
+)
+
+bazel_dep(name = "rules_ml_toolchain")
+
+archive_override(
+    module_name = "rules_ml_toolchain",
+    integrity = "sha256-Ztgjtsa06m8J1572/knhgeUwF1nuB9F2psgqAeEifWs=",
+    strip_prefix = "rules_ml_toolchain-e8709f15382e4da1de5ca15672cb4412da3d989d",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/e8709f15382e4da1de5ca15672cb4412da3d989d.tar.gz"],
+)
+
+# Direct dep so //main can name absl targets; same version and repo_name as
+# XLA's own MODULE.bazel.
+bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_absl")
+bazel_dep(name = "googletest", dev_dependency = True)
+
+###############################################################################
+# Mirrored XLA overrides
+#
+# Bzlmod only honors *_override directives declared by the root module, so every
+# override in @xla's own MODULE.bazel is silently dropped when XLA is consumed
+# as a dependency. XLA's BUILD files depend on the patched rules (e.g. the
+# `plugin_flags` attribute that third_party/grpc/grpc.patch adds to
+# `generate_cc`), so these have to be repeated here verbatim.
+#
+# The patch files under //third_party are verbatim copies of XLA's own, taken
+# from the commit pinned above; Bazel rejects patch labels outside the root
+# repo, so they cannot simply be referenced as @xla//third_party/...
+#
+# Keep both this list and the copied patches in sync when bumping XLA.
+###############################################################################
+
+single_version_override(
+    module_name = "grpc",
+    patch_strip = 1,
+    patches = [
+        "//third_party/grpc:grpc.patch",
+    ],
+    version = "1.81.0",
+)
+
+single_version_override(
+    module_name = "abseil-cpp",
+    patch_strip = 1,
+    patches = [
+        "//third_party/absl:btree.patch",
+        "//third_party/absl:endian.patch",
+        "//third_party/absl:raw_hash_set.patch",
+    ],
+    version = "20260526.0",
+)
+
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = [
+        "//third_party/protobuf:protobuf_arena.patch",
+        "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
+        "//third_party/protobuf:fix_python_dist_package.patch",
+    ],
+    version = "32.1",
+)
+
+single_version_override(
+    module_name = "rules_python",
+    patch_strip = 1,
+    patches = [
+        "//third_party/py:rules_python_freethreaded.patch",
+        "//third_party/py:rules_python_scope.patch",
+    ],
+    version = "2.2.0",
+)
+
+archive_override(
+    module_name = "googletest",
+    patch_strip = 1,
+    patches = [
+        "//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
+        "//third_party/googletest:googletest.patch",
+    ],
+    strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
+    urls = ["https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c94018.zip"],
+)

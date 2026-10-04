@@ -1,0 +1,31 @@
+# Fix NFS warning/slowness by moving the build output base to /tmp
+startup --output_base=/tmp/bazel_inr8842
+
+# Enable required experimental remote execution flag for OpenXLA
+build --experimental_repo_remote_exec
+
+###############################################################################
+# Flags required by @xla
+#
+# A dependency's .bazelrc is not inherited, so the settings XLA's own build
+# relies on have to be repeated here. Keep in sync with the .bazelrc of the XLA
+# commit pinned in MODULE.bazel.
+###############################################################################
+
+common --enable_bzlmod --noenable_workspace
+
+# XLA's generated repos (e.g. the dummy @local_config_rocm) contain globs that
+# match nothing; Bazel 8 made that an error by default.
+common --incompatible_disallow_empty_glob=false
+
+# False in Bazel 8, but XLA still depends on it.
+common --legacy_external_runfiles=true
+
+# XLA builds with the hermetic toolchain from @rules_ml_toolchain.
+common --incompatible_enable_cc_toolchain_resolution
+common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
+
+# Build against the local clang instead of the hermetic toolchain.
+common:clang_local --noincompatible_enable_cc_toolchain_resolution
+common:clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
+common:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
