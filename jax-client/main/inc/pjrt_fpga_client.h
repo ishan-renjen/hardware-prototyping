@@ -39,6 +39,8 @@
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+#include "main/inc/transport.h"
+
 namespace xla
 {
     struct BufferState
@@ -73,7 +75,8 @@ namespace xla
     class PrototypeDevice final : public PjRtDevice
     {
     public:
-        explicit PrototypeDevice(int id);
+        explicit PrototypeDevice(int id, std::unique_ptr<Transport> transport = nullptr);
+        Transport* transport() const { return transport_.get(); }
 
         const PrototypeDeviceDescription &description() const override
         {
@@ -104,6 +107,7 @@ namespace xla
         PjRtClient *client_ = nullptr;
         PrototypeDeviceDescription description_;
         PjRtMemorySpace *memory_space_ = nullptr;
+        std::unique_ptr<Transport> transport_;
     }; // class PrototypeDevice
 
     class PrototypeClient final : public PjRtClient

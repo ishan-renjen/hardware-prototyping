@@ -1,0 +1,23 @@
+//unary_sim.proto
+syntax = "proto3";
+
+package simulator;
+
+message Tensor {
+  string dtype = 1;
+  repeated int64 dims = 2;
+  bytes data = 3;
+}
+
+message ExecuteRequest {
+  string module = 1; //which hardware module to run
+  repeated Tensor inputs = 2;
+}
+
+message ExecuteResponse {
+  repeated Tensor outputs = 1;
+}
+
+service Simulator {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}

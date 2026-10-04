@@ -26,6 +26,8 @@ archive_override(
 # XLA's own MODULE.bazel.
 bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_absl")
 bazel_dep(name = "googletest", dev_dependency = True)
+bazel_dep(name = "grpc", version = "1.81.0")
+bazel_dep(name = "protobuf", version = "32.1")
 
 ###############################################################################
 # Mirrored XLA overrides

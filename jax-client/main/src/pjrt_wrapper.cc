@@ -2,6 +2,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <cstdlib>
 
 #include "absl/status/status.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -10,7 +11,8 @@
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/pjrt_executable.h"
 
-#include "main/pjrt_fpga_client.h"
+#include "main/inc/pjrt_fpga_client.h"
+#include "main/inc/grpc_transport.h"
 
 namespace pjrt
 {
@@ -27,7 +29,8 @@ namespace pjrt
 
             // One device for the PoC; create_options are ignored for now.
             std::vector<std::unique_ptr<xla::PrototypeDevice>> devices;
-            devices.push_back(std::make_unique<xla::PrototypeDevice>(/*id=*/0));
+            const char* target = std::getenv("PROTOTYPE_SIM_TARGET");
+            devices.push_back(std::make_unique<xla::PrototypeDevice>(/*id=*/0, std::make_unique<GrpcTransport>(target != nullptr ? target : "localhost:50051")));
             auto client = std::make_unique<xla::PrototypeClient>(
                 /*process_index=*/0, std::move(devices), /*num_threads=*/1);
 

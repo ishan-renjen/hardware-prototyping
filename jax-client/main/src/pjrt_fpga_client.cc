@@ -9,7 +9,7 @@
 #include "xla/literal.h"
 #include "xla/shape_util.h"
 
-#include "main/pjrt_fpga_client.h"
+#include "main/inc/pjrt_fpga_client.h"
 
 namespace xla
 {
@@ -40,7 +40,8 @@ namespace xla
     } // PrototypeDeviceDescription::PrototypeDeviceDescription()
     //=======================================================================================================
     //============================================PrototypeDevice============================================
-    PrototypeDevice::PrototypeDevice(int id) : description_(id)
+    PrototypeDevice::PrototypeDevice(int id, std::unique_ptr<Transport> transport)
+    : description_(id), transport_(std::move(transport))
     {
     } // PrototypeDevice::PrototypeDevice()
 
