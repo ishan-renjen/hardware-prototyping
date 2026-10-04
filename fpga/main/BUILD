@@ -1,6 +1,6 @@
 cc_library(
     name = "fpga_client",
-    srcs = ["pjrt_fpga_client.cc"],
+    srcs = ["src/pjrt_fpga_client.cc"],
     hdrs = ["pjrt_fpga_client.h"],
     deps = [
         "@com_google_absl//absl/base:core_headers",
@@ -32,6 +32,24 @@ cc_library(
         "@xla//xla/service:hlo_proto_cc",
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:logging",
+    ],
+)
+
+cc_binary(
+    name = "pjrt_c_api_prototype_plugin.so",
+    srcs = ["src/pjrt_wrapper.cc"],
+    additional_linker_inputs = [":pjrt_wrapper_version_script.lds"],
+    linkopts = [
+        "-Wl,--version-script,$(location :pjrt_wrapper_version_script.lds)",
+        "-Wl,--no-undefined",
+    ],
+    linkshared = True,
+    deps = [
+        ":fpga_client",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
+        "@xla//xla/pjrt/c:pjrt_c_api_wrapper_impl",
     ],
 )
 

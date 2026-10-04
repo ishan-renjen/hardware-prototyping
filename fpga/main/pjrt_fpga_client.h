@@ -41,6 +41,11 @@
 
 namespace xla
 {
+    struct BufferState
+    {
+        std::vector<uint8_t> bytes;
+        Future<> ready;
+    };
 
     class PrototypeMemorySpace;
 
@@ -88,17 +93,17 @@ namespace xla
 
         absl::Status TransferToInfeed(const LiteralSlice &literal) override { return absl::UnimplementedError("TransferToInfeed not supported"); }
         absl::Status TransferFromOutfeed(MutableBorrowingLiteral literal) override { return absl::UnimplementedError("TransferFromOutfeed not supported"); }
-        
+
         absl::Span<PjRtMemorySpace *const> memory_spaces() const override { return absl::MakeConstSpan(&memory_space_, 1); }
         absl::StatusOr<PjRtMemorySpace *> default_memory_space() const override { return memory_space_; }
-        void AttachMemorySpace(PjRtMemorySpace* memory_space);
+        void AttachMemorySpace(PjRtMemorySpace *memory_space);
 
         std::unique_ptr<ScopedAsyncTrackingEvent> CreateAsyncTrackingEvent(absl::string_view description) const override { return nullptr; }
 
     private:
         PjRtClient *client_ = nullptr;
         PrototypeDeviceDescription description_;
-        PjRtMemorySpace* memory_space_ = nullptr;
+        PjRtMemorySpace *memory_space_ = nullptr;
     }; // class PrototypeDevice
 
     class PrototypeClient final : public PjRtClient
@@ -110,7 +115,7 @@ namespace xla
         int process_index() const override { return process_index_; }
         int device_count() const override { return devices_.size(); }
 
-        absl::Span<PjRtDevice* const> devices() const override { return devices_; }
+        absl::Span<PjRtDevice *const> devices() const override { return devices_; }
         int addressable_device_count() const override { return addressable_devices_.size(); }
         absl::Span<PjRtDevice *const> addressable_devices() const override { return addressable_devices_; }
         absl::StatusOr<PjRtDevice *> LookupDevice(GlobalDeviceId global_device_id) const override;
@@ -123,10 +128,10 @@ namespace xla
 
         absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(MaybeOwningMlirModule module, CompileOptions options) override { return absl::UnimplementedError("CompileAndLoad() not implemented"); }
 
-        absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(const void *data, PrimitiveType type, absl::Span<int64_t const> dims, 
-                                                                         std::optional<absl::Span<int64_t const>> byte_strides, HostBufferSemantics host_buffer_semantics, 
-                                                                         absl::AnyInvocable<void() &&> on_done_with_host_buffer, PjRtMemorySpace *memory_space, 
-                                                                         const Layout *device_layout) override { return absl::UnimplementedError("BufferFromHostBuffer() not implemented"); }
+        absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(const void *data, PrimitiveType type, absl::Span<int64_t const> dims,
+                                                                         std::optional<absl::Span<int64_t const>> byte_strides, HostBufferSemantics host_buffer_semantics,
+                                                                         absl::AnyInvocable<void() &&> on_done_with_host_buffer, PjRtMemorySpace *memory_space,
+                                                                         const Layout *device_layout) override;
 
     private:
         int process_index_;
@@ -135,7 +140,7 @@ namespace xla
         absl::flat_hash_map<int, PrototypeDevice *> id_to_device_;
 
         std::vector<std::unique_ptr<PrototypeMemorySpace>> owned_memory_spaces_;
-        std::vector<PjRtMemorySpace*> memory_spaces_;
+        std::vector<PjRtMemorySpace *> memory_spaces_;
 
         std::vector<PjRtDevice *> addressable_devices_;
     }; // class PrototypeClient
@@ -170,7 +175,7 @@ namespace xla
 
     private:
         int id_;
-        PjRtDevice* device_;
+        PjRtDevice *device_;
         std::string debug_string_;
         std::string to_string_;
 
@@ -180,96 +185,56 @@ namespace xla
     class PrototypeBuffer final : public PjRtBuffer
     {
     public:
-        PrototypeBuffer(Shape shape, PrototypeMemorySpace *memory_space) : 
-                        shape_(std::move(shape)), 
-                        memory_space_(memory_space) {} // TODO: also take the data
+        PrototypeBuffer(Shape shape, PrototypeMemorySpace *memory_space, std::shared_ptr<BufferState> state) : shape_(std::move(shape)),
+                                                                                                                   memory_space_(memory_space),
+                                                                                                                   buffer_state(std::move(state)) {} // TODO: also take the data
 
+        std::shared_ptr<BufferState> state() const;
         // [needed] Accessors.
         const Shape &on_device_shape() const override { return shape_; }
 
         PjRtMemorySpace *memory_space() const override { return memory_space_; }
 
         PjRtDevice *device() const override { return memory_space_->devices()[0]; }
-
         PjRtClient *client() const override { return memory_space_->client(); }
-
-        bool IsOnCpu() const override { LOG(FATAL) << "TODO"; }
+        bool IsOnCpu() const override { return false; }
 
         // [needed] Device -> host readback; how JAX reads results.
-        Future<> ToLiteral(MutableLiteralBase *literal) override
-        {
-            return Future<>(Unimplemented("TODO: ToLiteral"));
-        }
-
+        Future<> ToLiteral(MutableLiteralBase *literal) override;
         // [needed] Same as ToLiteral, but the literal comes from `generator`.
-        Future<> LazyToLiteral(
-            absl::AnyInvocable<Future<MutableLiteralBase *>() &&> generator) override
-        {
-            return Future<>(Unimplemented("TODO: LazyToLiteral"));
-        }
+        Future<> LazyToLiteral(absl::AnyInvocable<Future<MutableLiteralBase *>() &&> generator) override;
 
         // [needed]
-        absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override
-        {
-            return Unimplemented("TODO: GetOnDeviceSizeInBytes");
-        }
+        absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override { return ShapeUtil::ByteSizeOf(shape_); }
 
         // [needed] Becomes ready when the data exists (e.g. an Execute output finished).
-        Future<> GetReadyFuture() override
-        {
-            return Future<>(Unimplemented("TODO: GetReadyFuture"));
-        }
+        Future<> GetReadyFuture() override;
 
         // [needed]
-        void Delete() override { LOG(FATAL) << "TODO"; }
+        void Delete() override;
 
-        bool IsDeleted() const override { LOG(FATAL) << "TODO"; }
+        bool IsDeleted() const override;
 
         // [optional] DLPack / ownership handoff.
-        absl::StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference() override
-        {
-            return Unimplemented("AcquireExternalReference not implemented.");
-        }
-
-        absl::StatusOr<std::unique_ptr<ExternalReference>>
-        ReleaseDeviceMemoryOwnership(bool wait_for_operations_to_complete) override
-        {
-            return Unimplemented("ReleaseDeviceMemoryOwnership not implemented.");
-        }
+        absl::StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference() override { return Unimplemented("AcquireExternalReference not implemented."); }
+        absl::StatusOr<std::unique_ptr<ExternalReference>> ReleaseDeviceMemoryOwnership(bool wait_for_operations_to_complete) override { return Unimplemented("ReleaseDeviceMemoryOwnership not implemented."); }
 
         // [optional]
-        Future<> CopyRawToHost(void *dst, int64_t offset, int64_t transfer_size) override
-        {
-            return Future<>(Unimplemented("CopyRawToHost not implemented."));
-        }
-
+        Future<> CopyRawToHost(void *dst, int64_t offset, int64_t transfer_size) override { return Future<>(Unimplemented("CopyRawToHost not implemented.")); }
         // [optional] Needed later for multi-device.
-        absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
-            PjRtMemorySpace *dst_memory_space) override
-        {
-            return Unimplemented("CopyToMemorySpace not implemented.");
-        }
-
+        absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(PjRtMemorySpace *dst_memory_space) override { return Unimplemented("CopyToMemorySpace not implemented."); }
         // [optional] Reinterpret the buffer with a new type/shape/layout, no copy.
-        absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
-            PrimitiveType element_type, absl::Span<const int64_t> dims,
-            const Layout *device_layout) override
-        {
-            return Unimplemented("Bitcast not implemented.");
-        }
-
+        absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(PrimitiveType element_type, absl::Span<const int64_t> dims, const Layout *device_layout) override { return Unimplemented("Bitcast not implemented."); }
         // [optional] Cross-host transfers; round-trip never uses these.
-        void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                                RemoteSendCallback on_done) override
-        {
-            on_done(Unimplemented("CopyToRemoteDevice not implemented."),
-                    /*sends_were_enqueued=*/false);
-        }
+        void CopyToRemoteDevice(Future<std::string> serialized_descriptor, RemoteSendCallback on_done) override { on_done(Unimplemented("CopyToRemoteDevice not implemented."), /*sends_were_enqueued=*/false); }
 
     private:
         Shape shape_;
         std::vector<uint8_t> bytes_;
-        PrototypeMemorySpace* memory_space_;
+        PrototypeMemorySpace *memory_space_;
+
+        mutable absl::Mutex mu_;
+        std::shared_ptr<BufferState> buffer_state ABSL_GUARDED_BY(mu_);
     }; // class PrototypeBuffer
 
     class PrototypeLoadedExecutable final : public PjRtLoadedExecutable
@@ -303,7 +268,7 @@ namespace xla
             return Unimplemented("TODO: GetOutputMemoryKinds");
         }
 
-        virtual absl::StatusOr<std::vector<std::vector<absl::string_view>>> 
+        virtual absl::StatusOr<std::vector<std::vector<absl::string_view>>>
         GetParameterMemoryKinds() const override
         {
             return Unimplemented("TODO: GetParameterMemoryKinds");

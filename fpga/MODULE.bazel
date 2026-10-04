@@ -8,8 +8,9 @@ bazel_dep(name = "xla")
 
 archive_override(
     module_name = "xla",
-    urls = ["https://github.com/openxla/xla/archive/bedbac90cfaa233d914a4c57c1cf9b8f18c42963.tar.gz"],
-    strip_prefix = "xla-bedbac90cfaa233d914a4c57c1cf9b8f18c42963",
+    integrity = "sha256-MsuAh9iDGKAfmXTq1iVOHKBtJj+hhH9hUDN5UlvUaJc=",
+    strip_prefix = "xla-91888df6ce85102c30220e41d952065925e10886",
+    urls = ["https://github.com/openxla/xla/archive/91888df6ce85102c30220e41d952065925e10886.tar.gz"],
 )
 
 bazel_dep(name = "rules_ml_toolchain")
