@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <atomic>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -54,7 +55,7 @@ namespace xla
     class PrototypeDeviceDescription final : public PjRtDeviceDescription
     {
     public:
-        explicit PrototypeDeviceDescription(int id);
+        explicit PrototypeDeviceDescription(int id, std::string kind);
 
         int id() const override { return id_; }
         int process_index() const override { return 0; }
@@ -75,8 +76,13 @@ namespace xla
     class PrototypeDevice final : public PjRtDevice
     {
     public:
-        explicit PrototypeDevice(int id, std::unique_ptr<Transport> transport = nullptr);
-        Transport* transport() const { return transport_.get(); }
+        explicit PrototypeDevice(int id, std::string kind = "prototype",
+                                 std::vector<std::string> modules = {},
+                                 std::shared_ptr<Transport> transport = nullptr);
+        Transport *transport() const { return transport_.get(); }
+        const std::vector<std::string> &modules() const { return modules_; }
+        // per-device call counter
+        uint64_t NextSeq() { return next_seq_.fetch_add(1, std::memory_order_relaxed); }
 
         const PrototypeDeviceDescription &description() const override
         {
@@ -106,8 +112,10 @@ namespace xla
     private:
         PjRtClient *client_ = nullptr;
         PrototypeDeviceDescription description_;
+        std::vector<std::string> modules_;
         PjRtMemorySpace *memory_space_ = nullptr;
-        std::unique_ptr<Transport> transport_;
+        std::shared_ptr<Transport> transport_;
+        std::atomic<uint64_t> next_seq_{0};
     }; // class PrototypeDevice
 
     class PrototypeClient final : public PjRtClient
@@ -190,8 +198,8 @@ namespace xla
     {
     public:
         PrototypeBuffer(Shape shape, PrototypeMemorySpace *memory_space, std::shared_ptr<BufferState> state) : shape_(std::move(shape)),
-                                                                                                                   memory_space_(memory_space),
-                                                                                                                   buffer_state(std::move(state)) {} // TODO: also take the data
+                                                                                                               memory_space_(memory_space),
+                                                                                                               buffer_state(std::move(state)) {} // TODO: also take the data
 
         std::shared_ptr<BufferState> state() const;
         // [needed] Accessors.

@@ -3,8 +3,11 @@
 #include <utility>
 #include <vector>
 #include <cstdlib>
+#include <string>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
@@ -24,13 +27,27 @@ namespace pjrt
         PJRT_Error *PJRT_Client_Create(PJRT_Client_Create_Args *args)
         {
             PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-                "PJRT_Client_Create_Args", PJRT_Client_Create_Args_STRUCT_SIZE,
-                args->struct_size));
+                "PJRT_Client_Create_Args", PJRT_Client_Create_Args_STRUCT_SIZE, args->struct_size));
 
-            // One device for the PoC; create_options are ignored for now.
+            const char *env = std::getenv("PROTOTYPE_SIM_TARGET");
+            const std::string target = env != nullptr ? env : "localhost:50051";
+
+            auto transport = std::make_shared<::GrpcTransport>(target);
+
+            absl::StatusOr<std::vector<RemoteDevice>> remote = transport->ListDevices();
+            if(!remote.ok())
+            {
+                return StatusToPjRtError(absl::UnavailableError(absl::StrCat("Simulation gateway not reachable @ ", target, ": ", remote.status().message())));
+            }
+            if(remote->empty()){
+                return StatusToPjRtError(absl::FailedPreconditionError(absl::StrCat("Simulation gateway @ ", target, "reports no devices")));
+            }
+
             std::vector<std::unique_ptr<xla::PrototypeDevice>> devices;
-            const char* target = std::getenv("PROTOTYPE_SIM_TARGET");
-            devices.push_back(std::make_unique<xla::PrototypeDevice>(/*id=*/0, std::make_unique<GrpcTransport>(target != nullptr ? target : "localhost:50051")));
+            for (RemoteDevice &rd : *remote)
+            {
+                devices.push_back(std::make_unique<xla::PrototypeDevice>(rd.id, std::move(rd.kind), std::move(rd.modules), transport));
+            }
             auto client = std::make_unique<xla::PrototypeClient>(
                 /*process_index=*/0, std::move(devices), /*num_threads=*/1);
 

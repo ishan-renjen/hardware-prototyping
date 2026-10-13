@@ -13,6 +13,18 @@ cc_library(
     ],
 )
 
+cc_test(
+    name = "grpc_transport_test",
+    size = "small",
+    srcs = ["test/grpc_transport_test.cc"],
+    tags = ["manual"],  # needs the Python server running; excluded from `bazel test //...`
+    deps = [
+        ":grpc_transport",
+        "@com_google_absl//absl/synchronization",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "fpga_client",
     srcs = ["src/pjrt_fpga_client.cc"],

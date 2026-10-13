@@ -1,4 +1,4 @@
-//unary_sim.proto
+//protocol for unary sim client-server interaction between JAX and simulation interface
 syntax = "proto3";
 
 package simulator;
@@ -10,14 +10,32 @@ message Tensor {
 }
 
 message ExecuteRequest {
-  string module = 1; //which hardware module to run
+  string module = 1;  //specific program being run
   repeated Tensor inputs = 2;
+  int32 device = 3;  //hardware component that runs it
+  uint64 seq = 4; //counter starting at 0
 }
 
+//echo response from request
 message ExecuteResponse {
   repeated Tensor outputs = 1;
+  int32 device = 2;          
+  uint64 seq = 3;
+}
+
+//single hardware component we want to target
+message DeviceInfo {
+  int32 id = 1;
+  string kind = 2;
+  repeated string modules = 3;
+}
+
+message ListDevicesRequest {}
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
 }
 
 service Simulator {
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
 }

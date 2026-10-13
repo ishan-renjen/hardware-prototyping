@@ -32,16 +32,19 @@ namespace xla
         }
     } // namespace
     //======================================PrototypeDeviceDescription=======================================
-    PrototypeDeviceDescription::PrototypeDeviceDescription(int id) : id_(id),
-                                                                     device_kind_("prototype"),
-                                                                     debug_string_(absl::StrCat("PrototypeDevice(id=", id, ")")),
-                                                                     to_string_(absl::StrCat("PrototypeDevice(", id, ")"))
+    PrototypeDeviceDescription::PrototypeDeviceDescription(int id, std::string kind)
+                                                        : id_(id),
+                                                          device_kind_(std::move(kind)),
+                                                          debug_string_(absl::StrCat("PrototypeDevice(id=", id, ", kind=", device_kind_, ")")),
+                                                          to_string_(absl::StrCat("PrototypeDevice(", id, ")"))
     {
     } // PrototypeDeviceDescription::PrototypeDeviceDescription()
     //=======================================================================================================
     //============================================PrototypeDevice============================================
-    PrototypeDevice::PrototypeDevice(int id, std::unique_ptr<Transport> transport)
-    : description_(id), transport_(std::move(transport))
+    PrototypeDevice::PrototypeDevice(int id, std::string kind, std::vector<std::string> modules, std::shared_ptr<Transport> transport)
+                                   : description_(id, std::move(kind)),
+                                     modules_(std::move(modules)),
+                                     transport_(std::move(transport))
     {
     } // PrototypeDevice::PrototypeDevice()
 

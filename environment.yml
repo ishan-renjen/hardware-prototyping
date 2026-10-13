@@ -1,0 +1,49 @@
+name: fpga-jax
+channels:
+  - defaults
+dependencies:
+  - _libgcc_mutex=0.1=main
+  - _openmp_mutex=5.1=52_gnu
+  - bzip2=1.0.8=h5eee18b_6
+  - ca-certificates=2026.9.25=h06a4308_0
+  - ld_impl_linux-64=2.44=h9e0c5a2_3
+  - libexpat=2.8.5=h7354ed3_1
+  - libffi=3.4.8=h06d3fd0_3
+  - libgcc=15.2.0=h69a1729_8
+  - libgcc-ng=15.2.0=h166f726_8
+  - libstdcxx=15.2.0=h39759b7_8
+  - libuuid=1.41.5=h5eee18b_0
+  - libxcb=1.17.0=h9b100fa_0
+  - libzlib=1.3.2=h47b2149_0
+  - ncurses=6.6=hfaaeb4e_0
+  - openssl=3.5.9=h1b28b03_0
+  - packaging=26.3=py312h06a4308_0
+  - pip=26.2.1=pyhc872135_0
+  - pthread-stubs=0.3=h47b2149_2
+  - python=3.12.15=hcd0331c_0
+  - readline=8.3=hc2a1206_0
+  - setuptools=83.0.0=py312h06a4308_0
+  - sqlite=3.53.4=h795bf6d_0
+  - tk=8.6.15=h54e0aa7_0
+  - tzdata=2026c=he532380_0
+  - wheel=0.47.0=py312h06a4308_0
+  - xorg-libx11=1.8.13=h65de747_0
+  - xorg-libxau=1.0.12=h9b100fa_0
+  - xorg-libxdmcp=1.1.5=h9b100fa_0
+  - xorg-xorgproto=2025.1=h47b2149_0
+  - xz=5.8.4=h140a991_0
+  - zlib=1.3.2=h47b2149_0
+  - pip:
+      - grpcio==1.84.0
+      - grpcio-tools==1.84.0
+      - jax==0.11.2
+      - jaxlib==0.11.2
+      - ml-dtypes==0.6.0
+      - numpy==2.5.3
+      - opt-einsum==3.4.0
+      - protobuf==7.36.2
+      - scipy==1.18.1
+      - typing-extensions==4.16.0
+variables:
+  PYTHONNOUSERSITE: '1'
+prefix: /home/inr8842/miniconda3/envs/fpga-jax
