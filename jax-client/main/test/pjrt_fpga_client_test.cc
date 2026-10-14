@@ -110,7 +110,7 @@ namespace xla
       EXPECT_FALSE(memory_space()->ToString().empty());
     }
 
-    TEST_F(PrototypeClientTest, BufferAndExecutableConstruct)
+        TEST_F(PrototypeClientTest, BufferConstructs)
     {
       Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
       auto state = std::make_shared<BufferState>();
@@ -120,9 +120,60 @@ namespace xla
       EXPECT_EQ(buffer.device(), device());
       EXPECT_EQ(buffer.client(), client_.get());
       EXPECT_TRUE(ShapeUtil::Equal(buffer.on_device_shape(), shape));
+    }
 
-      PrototypeLoadedExecutable executable;
-      (void)executable;
+    constexpr char kAddOneHlo[] = R"(HloModule jit_add_one
+      ENTRY main {
+        p = f32[4] parameter(0)
+        c = f32[] constant(1)
+        b = f32[4] broadcast(c), dimensions={}
+        ROOT a = f32[4] add(p, b)
+      }
+    )";
+
+    TEST_F(PrototypeClientTest, ExecutableDescribesItsProgram)
+    {
+      absl::StatusOr<std::unique_ptr<HloModule>> hlo = ParseAndReturnUnverifiedModule(kAddOneHlo);
+      ASSERT_TRUE(hlo.ok()) << hlo.status();
+      PrototypeLoadedExecutable exe(std::shared_ptr<HloModule>(std::move(*hlo)),
+                                    static_cast<PrototypeDevice *>(device()));
+
+      EXPECT_EQ(exe.name(), "jit_add_one");
+      EXPECT_EQ(exe.num_replicas(), 1);
+      EXPECT_EQ(exe.num_partitions(), 1);
+      EXPECT_EQ(exe.client(), client_.get());
+      ASSERT_EQ(exe.addressable_devices().size(), 1u);
+      EXPECT_EQ(exe.addressable_devices()[0], device());
+      EXPECT_EQ(exe.device_assignment()(0, 0), 0);
+
+      auto out_kinds = exe.GetOutputMemoryKinds();
+      ASSERT_TRUE(out_kinds.ok()) << out_kinds.status();
+      EXPECT_EQ((*out_kinds)[0].size(), 1u); // one output
+
+      auto param_kinds = exe.GetParameterMemoryKinds();
+      ASSERT_TRUE(param_kinds.ok()) << param_kinds.status();
+      EXPECT_EQ((*param_kinds)[0].size(), 1u); // one parameter
+
+      EXPECT_FALSE(exe.IsDeleted());
+      exe.Delete();
+      EXPECT_TRUE(exe.IsDeleted());
+    }
+
+    TEST_F(PrototypeClientTest, ExecuteWithoutTransportIsAnError)
+    {
+      absl::StatusOr<std::unique_ptr<HloModule>> hlo = ParseAndReturnUnverifiedModule(kAddOneHlo);
+      ASSERT_TRUE(hlo.ok()) << hlo.status();
+      PrototypeLoadedExecutable exe(std::shared_ptr<HloModule>(std::move(*hlo)),
+                                    static_cast<PrototypeDevice *>(device()));
+
+      std::vector<float> data = {0.f, 1.f, 2.f, 3.f};
+      absl::StatusOr<std::unique_ptr<PjRtBuffer>> in = MakeF32Buffer(data, {4});
+      ASSERT_TRUE(in.ok()) << in.status();
+
+      // The fixture's device has no transport, so Execute must fail cleanly, not crash.
+      PjRtBuffer *args[] = {in->get()};
+      auto result = exe.ExecuteSharded(args, device(), ExecuteOptions());
+      EXPECT_EQ(result.status().code(), absl::StatusCode::kFailedPrecondition);
     }
 
     TEST_F(PrototypeClientTest, HostBufferRoundTrip)
@@ -214,7 +265,7 @@ namespace xla
       (*buffer)->Delete();
       EXPECT_TRUE((*buffer)->IsDeleted());
 
-      // Errors, not crashes.
+      // Errors, not crashes
       EXPECT_FALSE((*buffer)->GetReadyFuture().Await().ok());
       EXPECT_FALSE((*buffer)->ToLiteralSync().ok());
     }

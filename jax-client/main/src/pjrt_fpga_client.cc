@@ -5,9 +5,13 @@
 #include <cstring>
 
 #include "absl/strings/str_cat.h"
+
 #include "xla/shape.h"
 #include "xla/literal.h"
 #include "xla/shape_util.h"
+#include "xla/layout_util.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/service/hlo_module_config.h"
 
 #include "main/inc/pjrt_fpga_client.h"
 
@@ -15,7 +19,6 @@ namespace xla
 {
     namespace
     {
-        // Shared by ToLiteral and LazyToLiteral. Equal() also compares layouts, and the memcpy depends on that.
         absl::Status CopyToLiteral(const Shape &shape, const std::vector<uint8_t> &bytes, MutableLiteralBase *literal)
         {
             if (!ShapeUtil::Equal(shape, literal->shape()))
@@ -29,22 +32,59 @@ namespace xla
                 std::memcpy(literal->untyped_data(), bytes.data(), bytes.size());
             }
             return absl::OkStatus();
+        } // CopyToLiteral()
+
+        absl::StatusOr<std::string> DtypeName(PrimitiveType type)
+        {
+            switch (type)
+            {
+            case F32:
+                return std::string("f32");
+            case F16:
+                return std::string("f16");
+            case S32:
+                return std::string("s32");
+            default:
+                return absl::UnimplementedError(absl::StrCat(
+                    "Unsupported dtype ", PrimitiveType_Name(type)));
+            }
+        }
+
+        absl::Status FillOutputs(absl::StatusOr<std::vector<Tensor>> result,
+                                 const std::vector<Shape> &shapes,
+                                 const std::vector<std::shared_ptr<BufferState>> &states)
+        {
+            if (!result.ok())
+                return result.status();
+            if (result->size() != states.size())
+                return absl::InternalError(absl::StrCat("Hardware returned ", result->size(),
+                                                        " outputs, expected ", states.size()));
+            for (size_t i = 0; i < states.size(); ++i)
+            {
+                const int64_t expected = ShapeUtil::ByteSizeOf(shapes[i]);
+                if (static_cast<int64_t>((*result)[i].data.size()) != expected)
+                    return absl::InternalError(absl::StrCat("Output ", i, ": got ", (*result)[i].data.size(),
+                                                            " bytes, expected ", expected));
+            }
+            for (size_t i = 0; i < states.size(); ++i)
+                states[i]->bytes = std::move((*result)[i].data);
+            return absl::OkStatus();
         }
     } // namespace
     //======================================PrototypeDeviceDescription=======================================
     PrototypeDeviceDescription::PrototypeDeviceDescription(int id, std::string kind)
-                                                        : id_(id),
-                                                          device_kind_(std::move(kind)),
-                                                          debug_string_(absl::StrCat("PrototypeDevice(id=", id, ", kind=", device_kind_, ")")),
-                                                          to_string_(absl::StrCat("PrototypeDevice(", id, ")"))
+        : id_(id),
+          device_kind_(std::move(kind)),
+          debug_string_(absl::StrCat("PrototypeDevice(id=", id, ", kind=", device_kind_, ")")),
+          to_string_(absl::StrCat("PrototypeDevice(", id, ")"))
     {
     } // PrototypeDeviceDescription::PrototypeDeviceDescription()
     //=======================================================================================================
     //============================================PrototypeDevice============================================
     PrototypeDevice::PrototypeDevice(int id, std::string kind, std::vector<std::string> modules, std::shared_ptr<Transport> transport)
-                                   : description_(id, std::move(kind)),
-                                     modules_(std::move(modules)),
-                                     transport_(std::move(transport))
+        : description_(id, std::move(kind)),
+          modules_(std::move(modules)),
+          transport_(std::move(transport))
     {
     } // PrototypeDevice::PrototypeDevice()
 
@@ -131,6 +171,34 @@ namespace xla
 
         return std::make_unique<PrototypeBuffer>(std::move(shape), static_cast<PrototypeMemorySpace *>(memory_space), std::move(state));
     } // PrototypeClient::BufferFromHostBuffer()
+
+    absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PrototypeClient::CompileAndLoad(MaybeOwningMlirModule module, CompileOptions options)
+    {
+        XlaComputation computation;
+        ABSL_RETURN_IF_ERROR(MlirToXlaComputation(module.mlir_module(), computation,
+                                                  /*use_tuple_args=*/false, /*return_tuple=*/false,
+                                                  /*exec_build_options=*/nullptr));
+        ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+        ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo, HloModule::CreateFromProto(computation.proto(), HloModuleConfig(program_shape)));
+
+        int device_id = 0;
+        const ExecutableBuildOptions &build = options.executable_build_options;
+        if (build.has_device_assignment())
+        {
+            device_id = build.device_assignment()(0, 0); // replica 0, partition 0
+        }
+        ABSL_ASSIGN_OR_RETURN(PjRtDevice * pjrt_device, LookupDevice(GlobalDeviceId(device_id)));
+        auto *device = static_cast<PrototypeDevice *>(pjrt_device);
+
+        const std::string &name = hlo->name();
+        if (std::find(device->modules().begin(), device->modules().end(), name) == device->modules().end())
+        {
+            return absl::UnimplementedError(absl::StrCat(
+                "device ", device_id, " (", device->device_kind(), ") does not implement ", name));
+        }
+
+        return std::make_unique<PrototypeLoadedExecutable>(std::shared_ptr<HloModule>(std::move(hlo)), device);
+    } // PrototypeClient::CompileAndLoad()
     //=======================================================================================================
     //=========================================PrototypeMemorySpace==========================================
     PrototypeMemorySpace::PrototypeMemorySpace(int id, PjRtDevice *device) : id_(id),
@@ -219,5 +287,139 @@ namespace xla
             });
         return std::move(done);
     }
+    //=======================================================================================================
+    //=======================================PrototypeLoadedExecutable=======================================
+    PrototypeLoadedExecutable::PrototypeLoadedExecutable(std::shared_ptr<HloModule> hlo_module, PrototypeDevice *device)
+        : hlo_module_(std::move(hlo_module)),
+          device_(device),
+          device_assignment_(1, 1),
+          addressable_devices_{device}
+    {
+        device_assignment_(0, 0) = device_->global_device_id().value();
+
+        const HloComputation *entry = hlo_module_->entry_computation();
+        num_parameters_ = entry->num_parameters();
+
+        const Shape &root = entry->root_instruction()->shape();
+        if (root.IsTuple())
+            output_shapes_.assign(root.tuple_shapes().begin(), root.tuple_shapes().end());
+        else
+            output_shapes_.push_back(root);
+
+        for (Shape &s : output_shapes_)
+            LayoutUtil::SetToDefaultLayout(&s);
+    } // PrototypeLoadedExecutable::PrototypeLoadedExecutable()
+
+    absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+    PrototypeLoadedExecutable::ExecuteHelper(absl::Span<PjRtBuffer *const> args,
+                                             Future<> &done_future) const
+    {
+        if (IsDeleted())
+            return absl::FailedPreconditionError(absl::StrCat("Executable ", name(), " was deleted"));
+        if (args.size() != static_cast<size_t>(num_parameters_))
+            return absl::InvalidArgumentError(absl::StrCat(
+                name(), " expects ", num_parameters_, " arguments, got ", args.size()));
+        if (device_->transport() == nullptr)
+            return absl::FailedPreconditionError("Device has no transport");
+
+        std::vector<std::shared_ptr<BufferState>> input_states; // keeps the bytes alive during the call
+        std::vector<TensorView> inputs;
+        input_states.reserve(args.size());
+        inputs.reserve(args.size());
+        for (PjRtBuffer *arg : args)
+        {
+            if (arg->device() != device_)
+                return absl::InvalidArgumentError(absl::StrCat("Argument is not on device ",
+                                                               device_->global_device_id().value()));
+            auto *buf = static_cast<PrototypeBuffer *>(arg);
+            std::shared_ptr<BufferState> st = buf->state();
+            if (st == nullptr)
+                return absl::InvalidArgumentError("Execute called with a deleted buffer");
+            ABSL_RETURN_IF_ERROR(st->ready.Await());
+            ABSL_ASSIGN_OR_RETURN(std::string dtype, DtypeName(buf->element_type()));
+            inputs.push_back(TensorView{std::move(dtype), buf->dimensions(), st->bytes});
+            input_states.push_back(std::move(st));
+        }
+
+        auto *memory_space = static_cast<PrototypeMemorySpace *>(device_->memory_spaces()[0]);
+        auto [promise, done] = MakePromise<>();
+        std::vector<std::shared_ptr<BufferState>> output_states;
+        std::vector<std::unique_ptr<PjRtBuffer>> outputs;
+        for (const Shape &shape : output_shapes_)
+        {
+            auto st = std::make_shared<BufferState>();
+            st->ready = done;
+            outputs.push_back(std::make_unique<PrototypeBuffer>(shape, memory_space, st));
+            output_states.push_back(std::move(st));
+        }
+
+        device_->transport()->Execute(
+            device_->global_device_id().value(), device_->NextSeq(), name(), inputs,
+            [output_states, output_shapes = output_shapes_, promise = std::move(promise)](
+                absl::StatusOr<std::vector<Tensor>> result) mutable
+            {
+                promise.Set(FillOutputs(std::move(result), output_shapes, output_states));
+            });
+
+        done_future = done;
+        return outputs;
+    } // PrototypeLoadedExecutable::ExecuteHelper()
+
+    absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
+    PrototypeLoadedExecutable::Execute(absl::Span<const std::vector<PjRtBuffer *>> argument_handles,
+                                       const ExecuteOptions &options,
+                                       std::optional<std::vector<Future<>>> &returned_futures) const
+    {
+        if (argument_handles.size() != 1)
+        {
+            return absl::InvalidArgumentError(absl::StrCat(
+                name(), " runs on 1 device, got arguments for ", argument_handles.size()));
+        }
+
+        Future<> done;
+        ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<PjRtBuffer>> outputs,
+                              ExecuteHelper(argument_handles[0], done));
+
+        if (returned_futures.has_value())
+        {
+            returned_futures->assign(1, done);
+        }
+
+        std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> result;
+        result.push_back(std::move(outputs));
+        return result;
+    } // PrototypeLoadedExecutable::Execute()
+
+    absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+    PrototypeLoadedExecutable::ExecuteSharded(absl::Span<PjRtBuffer *const> argument_handles,
+                                              PjRtDevice *device, const ExecuteOptions &options,
+                                              std::optional<Future<>> &returned_future,
+                                              bool fill_future) const
+    {
+        if (device != device_)
+        {
+            return absl::InvalidArgumentError(absl::StrCat(
+                name(), " was compiled for device ", device_->global_device_id().value(),
+                ", not ", device->global_device_id().value()));
+        }
+
+        Future<> done;
+        ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<PjRtBuffer>> outputs,
+                              ExecuteHelper(argument_handles, done));
+        if (fill_future)
+        {
+            returned_future = done;
+        }
+        return outputs;
+    } // PrototypeLoadedExecutable::ExecuteSharded()
+
+    absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+    PrototypeLoadedExecutable::ExecutePortable(absl::Span<PjRtBuffer *const> argument_handles,
+                                               PjRtDevice *device, const ExecuteOptions &options,
+                                               std::optional<Future<>> &returned_future,
+                                               bool fill_future) const
+    {
+        return ExecuteSharded(argument_handles, device, options, returned_future, fill_future);
+    } // ExecutePortable()
     //=======================================================================================================
 } // namespace xla

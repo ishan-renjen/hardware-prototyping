@@ -9,31 +9,21 @@
 #include <utility>
 #include <vector>
 #include <atomic>
+#include <array>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/threadpool.h"
 #include "xla/hlo/builder/xla_computation.h"
-#include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/pjrt_future.h"
-#include "xla/pjrt/semaphore.h"
-#include "xla/pjrt/transpose.h"
-#include "xla/service/buffer_assignment.h"
-#include "xla/service/computation_placer.h"
-#include "xla/service/executable.h"
-#include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -138,7 +128,7 @@ namespace xla
         absl::string_view platform_name() const override { return "prototype"; }
         absl::string_view platform_version() const override { return "<unknown>"; }
 
-        absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(MaybeOwningMlirModule module, CompileOptions options) override { return absl::UnimplementedError("CompileAndLoad() not implemented"); }
+        absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(MaybeOwningMlirModule module, CompileOptions options) override;
 
         absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(const void *data, PrimitiveType type, absl::Span<int64_t const> dims,
                                                                          std::optional<absl::Span<int64_t const>> byte_strides, HostBufferSemantics host_buffer_semantics,
@@ -157,18 +147,11 @@ namespace xla
         std::vector<PjRtDevice *> addressable_devices_;
     }; // class PrototypeClient
 
-    // =========================================================================
-    // Stubs. Every body is a placeholder so the file compiles; replace each.
-    //   [needed]   required for the round-trip proof of concept
-    //   [optional] can stay Unimplemented for the single-device PoC
-    // =========================================================================
-
     class PrototypeMemorySpace final : public PjRtMemorySpace
     {
     public:
         PrototypeMemorySpace(int id, PjRtDevice *device);
 
-        // [needed] All accessors. string_view returns must point at stored members.
         PjRtClient *client() const override { return device_->client(); }
 
         absl::Span<PjRtDevice *const> devices() const override { return absl::MakeConstSpan(&device_, 1); }
@@ -202,42 +185,30 @@ namespace xla
                                                                                                                buffer_state(std::move(state)) {} // TODO: also take the data
 
         std::shared_ptr<BufferState> state() const;
-        // [needed] Accessors.
         const Shape &on_device_shape() const override { return shape_; }
-
         PjRtMemorySpace *memory_space() const override { return memory_space_; }
 
         PjRtDevice *device() const override { return memory_space_->devices()[0]; }
         PjRtClient *client() const override { return memory_space_->client(); }
         bool IsOnCpu() const override { return false; }
 
-        // [needed] Device -> host readback; how JAX reads results.
         Future<> ToLiteral(MutableLiteralBase *literal) override;
-        // [needed] Same as ToLiteral, but the literal comes from `generator`.
         Future<> LazyToLiteral(absl::AnyInvocable<Future<MutableLiteralBase *>() &&> generator) override;
 
-        // [needed]
         absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override { return ShapeUtil::ByteSizeOf(shape_); }
 
-        // [needed] Becomes ready when the data exists (e.g. an Execute output finished).
         Future<> GetReadyFuture() override;
 
-        // [needed]
         void Delete() override;
 
         bool IsDeleted() const override;
 
-        // [optional] DLPack / ownership handoff.
         absl::StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference() override { return Unimplemented("AcquireExternalReference not implemented."); }
         absl::StatusOr<std::unique_ptr<ExternalReference>> ReleaseDeviceMemoryOwnership(bool wait_for_operations_to_complete) override { return Unimplemented("ReleaseDeviceMemoryOwnership not implemented."); }
 
-        // [optional]
         Future<> CopyRawToHost(void *dst, int64_t offset, int64_t transfer_size) override { return Future<>(Unimplemented("CopyRawToHost not implemented.")); }
-        // [optional] Needed later for multi-device.
         absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(PjRtMemorySpace *dst_memory_space) override { return Unimplemented("CopyToMemorySpace not implemented."); }
-        // [optional] Reinterpret the buffer with a new type/shape/layout, no copy.
         absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(PrimitiveType element_type, absl::Span<const int64_t> dims, const Layout *device_layout) override { return Unimplemented("Bitcast not implemented."); }
-        // [optional] Cross-host transfers; round-trip never uses these.
         void CopyToRemoteDevice(Future<std::string> serialized_descriptor, RemoteSendCallback on_done) override { on_done(Unimplemented("CopyToRemoteDevice not implemented."), /*sends_were_enqueued=*/false); }
 
     private:
@@ -252,90 +223,77 @@ namespace xla
     class PrototypeLoadedExecutable final : public PjRtLoadedExecutable
     {
     public:
-        PrototypeLoadedExecutable() {} // TODO: constructor arguments
+        PrototypeLoadedExecutable(std::shared_ptr<HloModule> hlo_module, PrototypeDevice *device);
 
-        // Keeps the base class's convenience overloads visible (name hiding).
+        // Keeps the base class's convenience overloads visible
         using PjRtLoadedExecutable::Execute;
         using PjRtLoadedExecutable::ExecutePortable;
         using PjRtLoadedExecutable::ExecuteSharded;
 
-        // [needed] PjRtExecutable pure virtuals. The exact set varies by XLA
-        // commit; the compiler will flag any that are missing or renamed.
-        absl::string_view name() const override { LOG(FATAL) << "TODO"; }
+        absl::string_view name() const override { return hlo_module_->name(); }
 
-        int num_replicas() const override { LOG(FATAL) << "TODO"; }
+        int num_replicas() const override { return 1; }
 
-        int num_partitions() const override { LOG(FATAL) << "TODO"; }
+        int num_partitions() const override { return 1; }
 
-        int64_t SizeOfGeneratedCodeInBytes() const override { LOG(FATAL) << "TODO"; }
+        int64_t SizeOfGeneratedCodeInBytes() const override { return 0; }
 
-        absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules() const override
-        {
-            return Unimplemented("TODO: GetHloModules");
+        absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules() const override 
+        { 
+            return std::vector<std::shared_ptr<HloModule>>{hlo_module_};
         }
 
         absl::StatusOr<std::vector<std::vector<absl::string_view>>>
         GetOutputMemoryKinds() const override
         {
-            return Unimplemented("TODO: GetOutputMemoryKinds");
+            return std::vector<std::vector<absl::string_view>>{
+                std::vector<absl::string_view>(output_shapes_.size(), "device")};
         }
 
         virtual absl::StatusOr<std::vector<std::vector<absl::string_view>>>
         GetParameterMemoryKinds() const override
         {
-            return Unimplemented("TODO: GetParameterMemoryKinds");
+            return std::vector<std::vector<absl::string_view>>{
+                std::vector<absl::string_view>(num_parameters_, "device")};
         }
 
-        // [needed] PjRtLoadedExecutable accessors.
-        PjRtClient *client() const override { LOG(FATAL) << "TODO"; }
+        PjRtClient *client() const override { return device_->client(); }
 
-        const DeviceAssignment &device_assignment() const override { LOG(FATAL) << "TODO"; }
+        const DeviceAssignment &device_assignment() const override { return device_assignment_; }
+        absl::Span<const LogicalDeviceIds> addressable_device_logical_ids() const override { return logical_ids_; }
+        absl::Span<PjRtDevice *const> addressable_devices() const override { return addressable_devices_; }
 
-        absl::Span<const LogicalDeviceIds> addressable_device_logical_ids() const override
-        {
-            LOG(FATAL) << "TODO";
-        }
-
-        absl::Span<PjRtDevice *const> addressable_devices() const override { LOG(FATAL) << "TODO"; }
-
-        // [needed] The core: input buffers -> transport -> output buffers + future.
         absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
         Execute(absl::Span<const std::vector<PjRtBuffer *>> argument_handles,
                 const ExecuteOptions &options,
-                std::optional<std::vector<Future<>>> &returned_futures) const override
-        {
-            return Unimplemented("TODO: Execute");
-        }
+                std::optional<std::vector<Future<>>> &returned_futures) const override;
 
-        // [needed] With 1 replica / 1 partition, these reduce to the same thing as Execute.
         absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
         ExecuteSharded(absl::Span<PjRtBuffer *const> argument_handles,
                        PjRtDevice *device, const ExecuteOptions &options,
                        std::optional<Future<>> &returned_future,
-                       bool fill_future) const override
-        {
-            return Unimplemented("TODO: ExecuteSharded");
-        }
+                       bool fill_future) const override;
 
         absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
         ExecutePortable(absl::Span<PjRtBuffer *const> argument_handles,
                         PjRtDevice *device, const ExecuteOptions &options,
                         std::optional<Future<>> &returned_future,
-                        bool fill_future) const override
-        {
-            return Unimplemented("TODO: ExecutePortable");
-        }
+                        bool fill_future) const override;
 
-        // [needed]
-        void Delete() override { LOG(FATAL) << "TODO"; }
+        void Delete() override { deleted_.store(true); }
 
-        bool IsDeleted() const override { LOG(FATAL) << "TODO"; }
-
-        // [optional] Override to return true once Execute fills returned_futures.
-        // bool IsReturnedFutureSupported() const override;
+        bool IsDeleted() const override { return deleted_.load(); }
 
     private:
-        // TODO: members
+        absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteHelper(absl::Span<PjRtBuffer *const> args, Future<> &done_future) const;
+        std::shared_ptr<HloModule> hlo_module_;
+        PrototypeDevice *device_;
+        std::vector<Shape> output_shapes_;
+        int num_parameters_;
+        DeviceAssignment device_assignment_;
+        std::array<LogicalDeviceIds, 1> logical_ids_{{{0, 0}}};
+        std::array<PjRtDevice *, 1> addressable_devices_;
+        std::atomic<bool> deleted_{false};
     }; // class PrototypeLoadedExecutable
 
 } // namespace xla
