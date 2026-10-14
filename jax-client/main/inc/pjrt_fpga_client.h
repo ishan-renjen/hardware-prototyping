@@ -223,7 +223,7 @@ namespace xla
     class PrototypeLoadedExecutable final : public PjRtLoadedExecutable
     {
     public:
-        PrototypeLoadedExecutable(std::shared_ptr<HloModule> hlo_module, PrototypeDevice *device);
+        PrototypeLoadedExecutable(std::shared_ptr<HloModule> hlo_module, PrototypeDevice *device, CompileOptions compile_options);
 
         // Keeps the base class's convenience overloads visible
         using PjRtLoadedExecutable::Execute;
@@ -241,6 +241,17 @@ namespace xla
         absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules() const override 
         { 
             return std::vector<std::shared_ptr<HloModule>>{hlo_module_};
+        }
+
+        absl::StatusOr<std::string> FingerprintExecutable() const override;
+        absl::StatusOr<CompileOptions> GetCompileOptions() const override { return compile_options_; }
+        absl::StatusOr<std::string> SerializeExecutable() const override
+        {
+            return absl::UnimplementedError("SerializeExecutable not supported");
+        }
+        absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override
+        {
+            return absl::UnimplementedError("GetCompiledMemoryStats not supported");
         }
 
         absl::StatusOr<std::vector<std::vector<absl::string_view>>>
@@ -294,6 +305,6 @@ namespace xla
         std::array<LogicalDeviceIds, 1> logical_ids_{{{0, 0}}};
         std::array<PjRtDevice *, 1> addressable_devices_;
         std::atomic<bool> deleted_{false};
+        CompileOptions compile_options_;
     }; // class PrototypeLoadedExecutable
-
 } // namespace xla

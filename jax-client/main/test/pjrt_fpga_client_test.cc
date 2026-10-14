@@ -136,7 +136,7 @@ namespace xla
       absl::StatusOr<std::unique_ptr<HloModule>> hlo = ParseAndReturnUnverifiedModule(kAddOneHlo);
       ASSERT_TRUE(hlo.ok()) << hlo.status();
       PrototypeLoadedExecutable exe(std::shared_ptr<HloModule>(std::move(*hlo)),
-                                    static_cast<PrototypeDevice *>(device()));
+                              static_cast<PrototypeDevice *>(device()), CompileOptions());
 
       EXPECT_EQ(exe.name(), "jit_add_one");
       EXPECT_EQ(exe.num_replicas(), 1);
@@ -164,7 +164,7 @@ namespace xla
       absl::StatusOr<std::unique_ptr<HloModule>> hlo = ParseAndReturnUnverifiedModule(kAddOneHlo);
       ASSERT_TRUE(hlo.ok()) << hlo.status();
       PrototypeLoadedExecutable exe(std::shared_ptr<HloModule>(std::move(*hlo)),
-                                    static_cast<PrototypeDevice *>(device()));
+                              static_cast<PrototypeDevice *>(device()), CompileOptions());
 
       std::vector<float> data = {0.f, 1.f, 2.f, 3.f};
       absl::StatusOr<std::unique_ptr<PjRtBuffer>> in = MakeF32Buffer(data, {4});

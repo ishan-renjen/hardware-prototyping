@@ -197,7 +197,7 @@ namespace xla
                 "device ", device_id, " (", device->device_kind(), ") does not implement ", name));
         }
 
-        return std::make_unique<PrototypeLoadedExecutable>(std::shared_ptr<HloModule>(std::move(hlo)), device);
+        return std::make_unique<PrototypeLoadedExecutable>(std::shared_ptr<HloModule>(std::move(hlo)), device, std::move(options));
     } // PrototypeClient::CompileAndLoad()
     //=======================================================================================================
     //=========================================PrototypeMemorySpace==========================================
@@ -289,11 +289,14 @@ namespace xla
     }
     //=======================================================================================================
     //=======================================PrototypeLoadedExecutable=======================================
-    PrototypeLoadedExecutable::PrototypeLoadedExecutable(std::shared_ptr<HloModule> hlo_module, PrototypeDevice *device)
-        : hlo_module_(std::move(hlo_module)),
-          device_(device),
-          device_assignment_(1, 1),
-          addressable_devices_{device}
+    PrototypeLoadedExecutable::PrototypeLoadedExecutable(std::shared_ptr<HloModule> hlo_module,
+                                                     PrototypeDevice *device,
+                                                     CompileOptions compile_options)
+                                                    : hlo_module_(std::move(hlo_module)),
+                                                    device_(device),
+                                                    device_assignment_(1, 1),
+                                                    addressable_devices_{device},
+                                                    compile_options_(std::move(compile_options))
     {
         device_assignment_(0, 0) = device_->global_device_id().value();
 
@@ -309,6 +312,12 @@ namespace xla
         for (Shape &s : output_shapes_)
             LayoutUtil::SetToDefaultLayout(&s);
     } // PrototypeLoadedExecutable::PrototypeLoadedExecutable()
+
+    absl::StatusOr<std::string> PrototypeLoadedExecutable::FingerprintExecutable() const
+    {
+        return absl::StrCat(tsl::Fingerprint64(hlo_module_->ToString()), "-",
+                            device_->global_device_id().value());
+    }
 
     absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
     PrototypeLoadedExecutable::ExecuteHelper(absl::Span<PjRtBuffer *const> args,
