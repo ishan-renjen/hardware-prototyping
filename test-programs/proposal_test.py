@@ -8,9 +8,7 @@ def add_one(x): return x + 1
 def times_two(x): return x * 2
 
 x = jnp.arange(4, dtype=jnp.float32)
-print("running add_one")
-print(add_one(x)) 
-print("running times_two")
-print(times_two(x)) 
-print("nested test")
-print(times_two(add_one(x)))
+print(x)
+print(f"adding one: {add_one(x)}") 
+print(f"multiply by 2: {times_two(x)}") 
+print(f"multiply by 2(add one(x)): {times_two(add_one(x))}")
