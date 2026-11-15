@@ -7,3 +7,6 @@ third_party/
 
 *.lock
 *.pyc
+alphafold_params/
+alphafold_inputs/
+alphafold_outputs/

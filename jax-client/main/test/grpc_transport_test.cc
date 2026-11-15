@@ -1,6 +1,8 @@
 // Requires the gateway running on localhost:50051 with the COMPONENTS in grpc-server/server.py:
 //   device 0 "adder"  -> jit_add_one
 //   device 1 "scaler" -> jit_times_two
+//   device 2 "vector" -> jit_dot, jit_matvec, ...
+//   device 3 "trimul" -> jit_tri_mul, jit_tri_block, ...
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -50,12 +52,43 @@ namespace
         GrpcTransport transport(kGateway);
         auto devices = transport.ListDevices();
         ASSERT_TRUE(devices.ok()) << devices.status();
-        ASSERT_EQ(devices->size(), 2u);
+        ASSERT_GE(devices->size(), 4u);  // the gateway may host further devices
         EXPECT_EQ((*devices)[0].id, 0);
         EXPECT_EQ((*devices)[0].kind, "adder");
         EXPECT_EQ((*devices)[0].modules, std::vector<std::string>{"jit_add_one"});
         EXPECT_EQ((*devices)[1].id, 1);
         EXPECT_EQ((*devices)[1].kind, "scaler");
+        EXPECT_EQ((*devices)[2].id, 2);
+        EXPECT_EQ((*devices)[2].kind, "vector");
+        EXPECT_EQ((*devices)[3].id, 3);
+        EXPECT_EQ((*devices)[3].kind, "trimul");
+    }
+
+    TEST(GrpcTransportTest, TwoOperandModuleUnbatchedAndBatched)
+    {
+        GrpcTransport transport(kGateway);
+        std::vector<float> x = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+        std::vector<float> y(8, 1.f);
+
+        // One sample: f32[4] . f32[4] -> scalar.
+        std::vector<int64_t> one = {4};
+        TensorView single[] = {F32View(x, one), F32View(y, one)};
+        // F32View spans the whole vector; trim both operands to the first sample.
+        single[0].data = single[0].data.subspan(0, 4 * sizeof(float));
+        single[1].data = single[1].data.subspan(0, 4 * sizeof(float));
+        auto dot = RunSync(transport, /*device=*/2, /*seq=*/0, "jit_dot", single);
+        ASSERT_TRUE(dot.ok()) << dot.status();
+        ASSERT_EQ(dot->size(), 1u);
+        EXPECT_TRUE((*dot)[0].dims.empty());
+        EXPECT_EQ(F32Values((*dot)[0]), (std::vector<float>{6.f}));
+
+        // A batch of two samples in one call: f32[2,4] . f32[2,4] -> f32[2].
+        std::vector<int64_t> two = {2, 4};
+        TensorView batch[] = {F32View(x, two), F32View(y, two)};
+        auto dots = RunSync(transport, /*device=*/2, /*seq=*/1, "jit_dot", batch);
+        ASSERT_TRUE(dots.ok()) << dots.status();
+        EXPECT_EQ((*dots)[0].dims, (std::vector<int64_t>{2}));
+        EXPECT_EQ(F32Values((*dots)[0]), (std::vector<float>{6.f, 22.f}));
     }
 
     TEST(GrpcTransportTest, RoutesToEachDevice)

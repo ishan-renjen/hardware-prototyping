@@ -1,6 +1,8 @@
 #include "main/inc/grpc_transport.h"
 
 #include <chrono>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -22,8 +24,10 @@ namespace
 GrpcTransport::GrpcTransport(const std::string &target)
 {
     grpc::ChannelArguments args;
-    args.SetMaxReceiveMessageSize(256 << 20);  //gRPC default is 4 MB
-    args.SetMaxSendMessageSize(256 << 20);
+    // -1 lifts gRPC's own limit (4 MB by default). A protobuf message still cannot
+    // exceed 2 GiB, so that is the ceiling for one Execute call's tensors combined.
+    args.SetMaxReceiveMessageSize(-1);
+    args.SetMaxSendMessageSize(-1);
     stub_ = simulator::Simulator::NewStub(
         grpc::CreateCustomChannel(target, grpc::InsecureChannelCredentials(), args));
 } //GrpcTransport::GrpcTransport()
@@ -58,6 +62,17 @@ void GrpcTransport::Execute(int device, uint64_t seq, absl::string_view module,
         }
         t->mutable_data()->assign(reinterpret_cast<const char *>(view.data.data()),
                                   view.data.size());
+    }
+
+    // gRPC aborts the process if asked to send a message protobuf cannot serialize,
+    // so turn an oversized request into an ordinary error here.
+    const size_t request_bytes = call->request.ByteSizeLong();
+    if (request_bytes > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+    {
+        std::move(call->done)(absl::ResourceExhaustedError(absl::StrCat(
+            "Execute request for ", module, " is ", request_bytes,
+            " bytes; one request cannot exceed 2 GiB (protobuf limit)")));
+        return;
     }
 
     stub_->async()->Execute(

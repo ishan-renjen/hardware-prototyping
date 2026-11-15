@@ -44,6 +44,8 @@ namespace xla
                 return std::string("f16");
             case S32:
                 return std::string("s32");
+            case PRED:
+                return std::string("bool");
             default:
                 return absl::UnimplementedError(absl::StrCat(
                     "Unsupported dtype ", PrimitiveType_Name(type)));
