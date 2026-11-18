@@ -52,9 +52,10 @@ COMPONENTS = {
     0: Component(0, "adder", {"jit_add_one": lambda x: x + 1}),
     1: Component(1, "scaler", {"jit_times_two": lambda x: x * 2}),
     # Bit-level arithmetic units (see arithmetic_units.py). Two operands each.
-    2: Component(2, "ripple_adder", arithmetic_units.ADDER_MODULES),
-    3: Component(3, "ripple_subtractor", arithmetic_units.SUBTRACTOR_MODULES),
-    4: Component(4, "array_multiplier", arithmetic_units.MULTIPLIER_MODULES),
+    # Ids 5-7 leave 2-4 free for the alphafold branch's vector/trimul/alphafold devices.
+    5: Component(5, "ripple_adder", arithmetic_units.ADDER_MODULES),
+    6: Component(6, "ripple_subtractor", arithmetic_units.SUBTRACTOR_MODULES),
+    7: Component(7, "array_multiplier", arithmetic_units.MULTIPLIER_MODULES),
 }
 
 class Gateway(unary_sim_pb2_grpc.SimulatorServicer):
