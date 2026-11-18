@@ -5,6 +5,7 @@ from concurrent import futures
 import grpc
 import numpy as np
 
+import arithmetic_units
 import unary_sim_pb2
 import unary_sim_pb2_grpc
 
@@ -20,7 +21,7 @@ def decode(t):
     return np.frombuffer(t.data, dtype=DTYPES[t.dtype]).reshape(tuple(t.dims))
 
 def encode(a):
-    a = np.ascontiguousarray(a)
+    a = np.asarray(a)  # not ascontiguousarray: that turns 0-d results into shape (1,)
     return unary_sim_pb2.Tensor(dtype=REV_DTYPES[a.dtype], dims=list(a.shape), data=a.tobytes())
 
 class Component:
@@ -50,6 +51,10 @@ class Component:
 COMPONENTS = {
     0: Component(0, "adder", {"jit_add_one": lambda x: x + 1}),
     1: Component(1, "scaler", {"jit_times_two": lambda x: x * 2}),
+    # Bit-level arithmetic units (see arithmetic_units.py). Two operands each.
+    2: Component(2, "ripple_adder", arithmetic_units.ADDER_MODULES),
+    3: Component(3, "ripple_subtractor", arithmetic_units.SUBTRACTOR_MODULES),
+    4: Component(4, "array_multiplier", arithmetic_units.MULTIPLIER_MODULES),
 }
 
 class Gateway(unary_sim_pb2_grpc.SimulatorServicer):
@@ -72,9 +77,17 @@ class Gateway(unary_sim_pb2_grpc.SimulatorServicer):
 
         comp.check_seq(request.seq)
         log.debug("device %d seq %d: %s", comp.id, request.seq, request.module)
-        outputs = comp.run(request.module, inputs)
+        try:
+            outputs = comp.run(request.module, inputs)
+        except Exception as e:  # wrong arity, dtypes or operand shapes for this module
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                          f"{request.module} on device {comp.id} rejected its inputs: {e}")
+        try:
+            encoded = [encode(o) for o in outputs]
+        except (KeyError, ValueError) as e:  # output dtype the wire format can't carry
+            context.abort(grpc.StatusCode.INTERNAL, f"{request.module} on device {comp.id}: {e}")
         return unary_sim_pb2.ExecuteResponse(
-            outputs=[encode(o) for o in outputs], device=request.device, seq=request.seq)
+            outputs=encoded, device=request.device, seq=request.seq)
 
 def serve(port=50051):
     server = grpc.server(
